@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import time
 
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 
 
 def parse_args():
@@ -52,9 +52,9 @@ def parse_args():
     parser.add_argument(
         "-m", "--match-mode",
         dest="match_mode",
-        choices=["regex", "exact"],
+        choices=["exact", "substring", "regex"],
         default="exact",
-        help="How to interpret patterns: 'exact' (default) or 'regex'.",
+        help="How to interpret patterns: 'exact' (default) or substring or 'regex'.",
     )
     parser.add_argument(
         "-x", "--exclude-pattern",
@@ -75,7 +75,7 @@ def parse_args():
         dest="content_pattern",
         help=(
             "Include only files whose *content* matches this pattern "
-            "(regex or exact substring, see --match-mode)."
+            "(regex, substring or exact substring, see --match-mode)."
         ),
     )
     parser.add_argument(
@@ -83,8 +83,15 @@ def parse_args():
         dest="content_exclude_pattern",
         help=(
             "Exclude files whose *content* matches this pattern "
-            "(regex or exact substring, see --match-mode)."
+            "(regex, substring or exact substring, see --match-mode)."
         ),
+    )
+    parser.add_argument(
+        "--batch-size",
+        dest="batch_size",
+        type=int,
+        default=100,
+        help="Number of lines to read at once when scanning files for content patterns.",
     )
     return parser.parse_args()
 
@@ -130,14 +137,16 @@ def main():
     recursive = args.recursive
     content_pattern = args.content_pattern
     content_exclude_pattern = args.content_exclude_pattern
+    batch_size = args.batch_size
 
     print(f"fileconcat version {VERSION}")
     print(f"Input directory: {input_dir}")
     print(f"Output file: {output_file}")
     print(f"Recursive: {recursive}")
-    print(f"No headers: {no_headers}, No body: {no_body}")
+    print(f"Headers: {not no_headers}, body: {not no_body}")
     print(f"Path pattern: {pattern!r}, exclude: {exclude_pattern!r}, match mode: {match_mode}")
     print(f"Content pattern: {content_pattern!r}, content exclude: {content_exclude_pattern!r}")
+    print(f"Batch size: {batch_size} lines")
 
     if no_headers and no_body:
         raise ValueError("Both --no-headers and --no-body cannot be set at the same time.")
@@ -191,6 +200,9 @@ def main():
             if match_mode == "regex":
                 if not include_regex.search(rel_path_str):
                     continue
+            elif match_mode == "substring":
+                if pattern not in rel_path_str and pattern not in rel_path.name:
+                    continue
             else:  # exact
                 if rel_path_str != pattern and rel_path.name != pattern:
                     continue
@@ -199,6 +211,9 @@ def main():
         if exclude_pattern:
             if match_mode == "regex":
                 if exclude_regex.search(rel_path_str):
+                    continue
+            elif match_mode == "substring":
+                if exclude_pattern in rel_path_str or exclude_pattern in rel_path.name:
                     continue
             else:  # exact
                 if rel_path_str == exclude_pattern or rel_path.name == exclude_pattern:
@@ -210,28 +225,54 @@ def main():
             content_excluded = False
             try:
                 with file_path.open("r", encoding="utf-8", errors="ignore") as f:
-                    for line in f:
+                    batch = []
+
+                    def process_batch(batch_text: str) -> bool:
+                        """Processes one batch of text. Returns True if it can stop reading the file."""
+                        nonlocal content_matches, content_excluded
+                        if not batch_text:
+                            return False
+
                         # include content pattern
                         if content_pattern and not content_matches:
                             if match_mode == "regex":
-                                if content_include_regex.search(line):
+                                if content_include_regex.search(batch_text):
                                     content_matches = True
-                            else:  # exact substring
-                                if content_pattern in line:
+                            else:  # exact -> substring
+                                if content_pattern in batch_text:
                                     content_matches = True
+
                         # exclude content pattern
                         if content_exclude_pattern and not content_excluded:
                             if match_mode == "regex":
-                                if content_exclude_regex.search(line):
+                                if content_exclude_regex.search(batch_text):
                                     content_excluded = True
-                            else:
-                                if content_exclude_pattern in line:
+                            else:  # exact -> substring
+                                if content_exclude_pattern in batch_text:
                                     content_excluded = True
-                        # early break
-                        if content_excluded or (
-                            content_pattern and content_matches and not content_exclude_pattern
-                        ):
-                            break
+
+                        # early stop logic
+                        if content_excluded:
+                            return True
+                        if content_pattern and content_matches and not content_exclude_pattern:
+                            # include found, exclude not defined — can continue reading
+                            return True
+                        return False
+
+                    for line in f:
+                        batch.append(line)
+                        if len(batch) >= batch_size:
+                            if process_batch("".join(batch)):
+                                break
+                            batch = []
+
+                    # process remaining batch, if any and file not resolved
+                    if batch and not (
+                        content_excluded or
+                        (content_pattern and content_matches and not content_exclude_pattern)
+                    ):
+                        process_batch("".join(batch))
+
             except Exception as e:
                 print(f"\nWarning: could not read file {rel_path_str}: {e}")
                 continue
