@@ -17,10 +17,10 @@ def make_path_matchers(
     match_mode: MatchMode,
 ) -> tuple[PathIncludeFn, PathExcludeFn]:
     """
-    Возвращает две функции:
+    Returns two functions:
       - include(rel_path_str, name) -> bool
       - exclude(rel_path_str, name) -> bool
-    Логика соответствует твоему последнему монолитному скрипту.
+    The logic corresponds to the last monolithic script.
     """
     include_regex = None
     exclude_regex = None

@@ -1,4 +1,4 @@
-# Installation
+# 📦 Installation
 
 ## 1. From source (Python)
 

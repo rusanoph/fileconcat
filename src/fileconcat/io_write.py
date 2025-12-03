@@ -11,8 +11,8 @@ def write_output(
     files: list[tuple[str, str]],
 ) -> float:
     """
-    Пишет объединённый файл.
-    Возвращает время записи (секунды).
+    Writes a unified file.
+    Returns the write time (seconds).
     """
     total = len(files)
     if total == 0:
@@ -45,5 +45,5 @@ def write_output(
             out_f.write("\n")
 
     write_elapsed = time.monotonic() - write_start
-    print()  # перенос после прогресс-бара
+    print()  # newline after progress bar
     return write_elapsed

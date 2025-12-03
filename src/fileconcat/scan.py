@@ -35,9 +35,9 @@ def iter_files(root: str, recursive: bool):
 
 def scan_files(cfg: AppConfig) -> tuple[list[tuple[str, str]], ScanStats]:
     """
-    Обходит файловую систему и возвращает:
-      - список (file_path_str, rel_path_str)
-      - статистику сканирования
+    Scans the file system and returns:
+      - a list of (file_path_str, rel_path_str)
+      - scan statistics
     """
     input_dir_str = str(cfg.input_dir)
     output_file_str = str(cfg.output_file)
