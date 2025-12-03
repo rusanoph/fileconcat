@@ -2,8 +2,9 @@ import argparse
 import os
 from pathlib import Path
 import re
+import time
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 
 def parse_args():
@@ -100,15 +101,20 @@ def iter_files(root: Path, recursive: bool):
                 yield entry
 
 
-def print_progress(processed: int, total: int, width: int = 40):
-    """Print a simple progress bar like: [#####-----] 12/100 (12.0%)"""
+def print_progress(processed: int, total: int, start_time: float, width: int = 40):
+    """Print a progress bar like: [#####-----] 12/100 (12.0%) |  1.2s"""
     if total <= 0:
         return
     ratio = processed / total
     filled = int(width * ratio)
     bar = "#" * filled + "-" * (width - filled)
     percent = ratio * 100
-    print(f"[{bar}] {processed}/{total} ({percent:5.1f}%)", end="\r", flush=True)
+    elapsed = time.monotonic() - start_time
+    print(
+        f"[{bar}] {processed}/{total} ({percent:5.1f}%) | {elapsed:6.1f}s",
+        end="\r",
+        flush=True,
+    )
 
 
 def main():
@@ -154,19 +160,26 @@ def main():
     if content_exclude_pattern and match_mode == "regex":
         content_exclude_regex = re.compile(content_exclude_pattern)
 
-    # Phase 1: scan files and build filtered list, showing scan progress
-    print("Scanning files...")
+    # Phase 1: scan files and build filtered list, with time-based progress updates
+    scan_start = time.monotonic()
+    last_scan_update = scan_start
     scanned = 0
     filtered = []
 
     for file_path in iter_files(input_dir, recursive=recursive):
         scanned += 1
-        if scanned % 100 == 0:
-            print(f"Scanned {scanned} files...", end="\r", flush=True)
 
-        file_path = file_path.resolve()
+        now = time.monotonic()
+        if now - last_scan_update >= 0.1:
+            elapsed = now - scan_start
+            print(
+                f"Scanning files... scanned {scanned} files (elapsed {elapsed:.1f}s)",
+                end="\r",
+                flush=True,
+            )
+            last_scan_update = now
 
-        # skip result file itself
+        # file_path уже абсолютный, потому что input_dir был resolve()
         if file_path == output_file:
             continue
 
@@ -214,9 +227,10 @@ def main():
                             else:
                                 if content_exclude_pattern in line:
                                     content_excluded = True
-                        # early break: если уже понятно, что файл исключён,
-                        # или включён и исключающего паттерна нет
-                        if content_excluded or (content_pattern and content_matches and not content_exclude_pattern):
+                        # early break
+                        if content_excluded or (
+                            content_pattern and content_matches and not content_exclude_pattern
+                        ):
                             break
             except Exception as e:
                 print(f"\nWarning: could not read file {rel_path_str}: {e}")
@@ -229,7 +243,11 @@ def main():
 
         filtered.append((file_path, rel_path_str))
 
-    print(f"\nFound {len(filtered)} matching files out of {scanned} scanned.")
+    scan_elapsed = time.monotonic() - scan_start
+    print(
+        f"\nFound {len(filtered)} matching files out of {scanned} scanned "
+        f"in {scan_elapsed:.1f}s."
+    )
 
     total = len(filtered)
     if total == 0:
@@ -239,13 +257,15 @@ def main():
     # Ensure output directory exists
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Phase 2: write files with a nice progress bar
+    # Phase 2: write files with a nice progress bar + elapsed time
     print("Writing output...")
+    write_start = time.monotonic()
     processed = 0
+
     with output_file.open("w", encoding="utf-8") as out_f:
         for file_path, rel_path_str in filtered:
             processed += 1
-            print_progress(processed, total)
+            print_progress(processed, total, write_start)
 
             if not no_headers:
                 out_f.write(f"# {rel_path_str}\n")
@@ -263,8 +283,14 @@ def main():
 
             out_f.write("\n")
 
+    write_elapsed = time.monotonic() - write_start
+    total_elapsed = scan_elapsed + write_elapsed
+
     print()  # newline after progress bar
-    print("Done.")
+    print(
+        f"Done. Writing took {write_elapsed:.1f}s, "
+        f"total time {total_elapsed:.1f}s."
+    )
 
 
 if __name__ == "__main__":
