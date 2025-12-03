@@ -4,7 +4,39 @@ from pathlib import Path
 import re
 import time
 
-VERSION = "1.3.2"
+VERSION = "1.5.0"
+
+# Directories that are skipped by default during a recursive traversal
+DEFAULT_EXCLUDED_DIR_NAMES = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".idea",
+    ".vscode",
+    "__pycache__",
+    "node_modules",
+    "dist",
+    "build",
+    "out",
+    "target",
+    ".gradle",
+    ".mvn",
+    ".venv",
+    "venv",
+}
+
+# Binary file extensions that don't make sense to search for text patterns
+DEFAULT_BINARY_EXTS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp",
+    ".ico",
+    ".pdf",
+    ".zip", ".tar", ".gz", ".bz2", ".7z",
+    ".jar",
+    ".exe", ".dll", ".so", ".dylib",
+    ".class",
+    ".bin",
+    ".woff", ".woff2", ".ttf", ".otf",
+}
 
 
 def parse_args():
@@ -54,7 +86,7 @@ def parse_args():
         dest="match_mode",
         choices=["exact", "substring", "regex"],
         default="exact",
-        help="How to interpret patterns: 'exact' (default) or substring or 'regex'.",
+        help="How to interpret patterns: 'exact' (default), 'substring' or 'regex'.",
     )
     parser.add_argument(
         "-x", "--exclude-pattern",
@@ -75,7 +107,8 @@ def parse_args():
         dest="content_pattern",
         help=(
             "Include only files whose *content* matches this pattern "
-            "(regex, substring or exact substring, see --match-mode)."
+            "(regex or substring, see --match-mode). "
+            "For 'exact' match-mode this is a substring search."
         ),
     )
     parser.add_argument(
@@ -83,7 +116,8 @@ def parse_args():
         dest="content_exclude_pattern",
         help=(
             "Exclude files whose *content* matches this pattern "
-            "(regex, substring or exact substring, see --match-mode)."
+            "(regex, substring or exact, see --match-mode). "
+            "For 'exact' match-mode this is a substring search."
         ),
     )
     parser.add_argument(
@@ -96,16 +130,22 @@ def parse_args():
     return parser.parse_args()
 
 
-def iter_files(root: Path, recursive: bool):
-    """Iterate over files in root. If recursive is False, only top-level files."""
+def iter_files(root: str, recursive: bool):
+    """
+    Iterate over files, working with path strings.
+    When performing a recursive traversal, exclude directories with names in DEFAULT_EXCLUDED_DIR_NAMES.
+    """
     if recursive:
-        for dirpath, _, filenames in os.walk(root):
+        for dirpath, dirnames, filenames in os.walk(root):
+            # exclude non-necessary directories on the fly, so that os.walk doesn't enter them at all
+            dirnames[:] = [d for d in dirnames if d not in DEFAULT_EXCLUDED_DIR_NAMES]
             for name in filenames:
-                yield Path(dirpath) / name
+                yield os.path.join(dirpath, name)
     else:
-        for entry in root.iterdir():
-            if entry.is_file():
-                yield entry
+        with os.scandir(root) as it:
+            for entry in it:
+                if entry.is_file():
+                    yield entry.path
 
 
 def print_progress(processed: int, total: int, start_time: float, width: int = 40):
@@ -128,7 +168,10 @@ def main():
     args = parse_args()
 
     input_dir = Path(args.input_dir).resolve()
+    input_dir_str = str(input_dir)
     output_file = Path(args.output_file).resolve()
+    output_file_str = str(output_file)
+
     no_headers = args.no_headers
     no_body = args.no_body
     pattern = args.pattern
@@ -137,7 +180,7 @@ def main():
     recursive = args.recursive
     content_pattern = args.content_pattern
     content_exclude_pattern = args.content_exclude_pattern
-    batch_size = args.batch_size
+    batch_size = max(1, args.batch_size)
 
     print(f"fileconcat version {VERSION}")
     print(f"Input directory: {input_dir}")
@@ -173,13 +216,13 @@ def main():
     scan_start = time.monotonic()
     last_scan_update = scan_start
     scanned = 0
-    filtered = []
+    filtered: list[tuple[str, str]] = []
 
-    for file_path in iter_files(input_dir, recursive=recursive):
+    for file_path_str in iter_files(input_dir_str, recursive=recursive):
         scanned += 1
 
         now = time.monotonic()
-        if now - last_scan_update >= 0.1:
+        if now - last_scan_update >= 1.0:
             elapsed = now - scan_start
             print(
                 f"Scanning files... scanned {scanned} files (elapsed {elapsed:.1f}s)",
@@ -188,12 +231,11 @@ def main():
             )
             last_scan_update = now
 
-        # file_path уже абсолютный, потому что input_dir был resolve()
-        if file_path == output_file:
+        if file_path_str == output_file_str:
             continue
 
-        rel_path = file_path.relative_to(input_dir)
-        rel_path_str = rel_path.as_posix()  # "dir/file.ext"
+        rel_path_str = os.path.relpath(file_path_str, input_dir_str).replace(os.sep, "/")
+        name = os.path.basename(file_path_str)
 
         # Path include filter
         if pattern:
@@ -201,10 +243,10 @@ def main():
                 if not include_regex.search(rel_path_str):
                     continue
             elif match_mode == "substring":
-                if pattern not in rel_path_str and pattern not in rel_path.name:
+                if pattern not in rel_path_str and pattern not in name:
                     continue
             else:  # exact
-                if rel_path_str != pattern and rel_path.name != pattern:
+                if rel_path_str != pattern and name != pattern:
                     continue
 
         # Path exclude filter
@@ -213,76 +255,88 @@ def main():
                 if exclude_regex.search(rel_path_str):
                     continue
             elif match_mode == "substring":
-                if exclude_pattern in rel_path_str or exclude_pattern in rel_path.name:
+                if exclude_pattern in rel_path_str or exclude_pattern in name:
                     continue
             else:  # exact
-                if rel_path_str == exclude_pattern or rel_path.name == exclude_pattern:
+                if rel_path_str == exclude_pattern or name == exclude_pattern:
                     continue
 
         # Content-based filters (only if any content pattern given)
         if content_pattern or content_exclude_pattern:
-            content_matches = False
-            content_excluded = False
-            try:
-                with file_path.open("r", encoding="utf-8", errors="ignore") as f:
-                    batch = []
+            ext = os.path.splitext(name)[1].lower()
+            is_binary_like = ext in DEFAULT_BINARY_EXTS
 
-                    def process_batch(batch_text: str) -> bool:
-                        """Processes one batch of text. Returns True if it can stop reading the file."""
-                        nonlocal content_matches, content_excluded
-                        if not batch_text:
-                            return False
-
-                        # include content pattern
-                        if content_pattern and not content_matches:
-                            if match_mode == "regex":
-                                if content_include_regex.search(batch_text):
-                                    content_matches = True
-                            else:  # exact -> substring
-                                if content_pattern in batch_text:
-                                    content_matches = True
-
-                        # exclude content pattern
-                        if content_exclude_pattern and not content_excluded:
-                            if match_mode == "regex":
-                                if content_exclude_regex.search(batch_text):
-                                    content_excluded = True
-                            else:  # exact -> substring
-                                if content_exclude_pattern in batch_text:
-                                    content_excluded = True
-
-                        # early stop logic
-                        if content_excluded:
-                            return True
-                        if content_pattern and content_matches and not content_exclude_pattern:
-                            # include found, exclude not defined — can continue reading
-                            return True
-                        return False
-
-                    for line in f:
-                        batch.append(line)
-                        if len(batch) >= batch_size:
-                            if process_batch("".join(batch)):
-                                break
-                            batch = []
-
-                    # process remaining batch, if any and file not resolved
-                    if batch and not (
-                        content_excluded or
-                        (content_pattern and content_matches and not content_exclude_pattern)
-                    ):
-                        process_batch("".join(batch))
-
-            except Exception as e:
-                print(f"\nWarning: could not read file {rel_path_str}: {e}")
+            # If we need to check if a file contains a pattern, and the file has a binary extension —
+            # we can immediately skip it: everything is equal, we don't need to read it as text.
+            if content_pattern and is_binary_like:
                 continue
 
+            content_matches = False
+            content_excluded = False
+
+            # If only the exclude pattern is given and the file is binary — consider it as not excluded
+            # (since earlier, by the fact, only without unnecessary reading).
+            if not is_binary_like:
+                try:
+                    with open(file_path_str, "r", encoding="utf-8", errors="ignore") as f:
+                        batch: list[str] = []
+
+                        def process_batch(batch_text: str) -> bool:
+                            """Processes one batch of text. True -> can stop reading the file."""
+                            nonlocal content_matches, content_excluded
+                            if not batch_text:
+                                return False
+
+                            # include content pattern
+                            if content_pattern and not content_matches:
+                                if match_mode == "regex":
+                                    if content_include_regex.search(batch_text):
+                                        content_matches = True
+                                else:  # exact -> substring
+                                    if content_pattern in batch_text:
+                                        content_matches = True
+
+                            # exclude content pattern
+                            if content_exclude_pattern and not content_excluded:
+                                if match_mode == "regex":
+                                    if content_exclude_regex.search(batch_text):
+                                        content_excluded = True
+                                else:  # exact -> substring
+                                    if content_exclude_pattern in batch_text:
+                                        content_excluded = True
+
+                            # early stop logic
+                            if content_excluded:
+                                return True
+                            if content_pattern and content_matches and not content_exclude_pattern:
+                                return True
+                            return False
+
+                        for line in f:
+                            batch.append(line)
+                            if len(batch) >= batch_size:
+                                if process_batch("".join(batch)):
+                                    break
+                                batch = []
+
+                        # process the remaining batch
+                        if batch and not (
+                            content_excluded or
+                            (content_pattern and content_matches and not content_exclude_pattern)
+                        ):
+                            process_batch("".join(batch))
+
+                except Exception as e:
+                    print(f"\nWarning: could not read file {rel_path_str}: {e}")
+                    continue
+
+            # final check after content matching
             if content_pattern and not content_matches:
                 continue
             if content_exclude_pattern and content_excluded:
                 continue
 
-        filtered.append((file_path, rel_path_str))
+        filtered.append((file_path_str, rel_path_str))
 
     scan_elapsed = time.monotonic() - scan_start
     print(
@@ -304,7 +358,7 @@ def main():
     processed = 0
 
     with output_file.open("w", encoding="utf-8") as out_f:
-        for file_path, rel_path_str in filtered:
+        for file_path_str, rel_path_str in filtered:
             processed += 1
             print_progress(processed, total, write_start)
 
@@ -316,7 +370,7 @@ def main():
                 continue
 
             try:
-                with file_path.open("r", encoding="utf-8", errors="replace") as f:
+                with open(file_path_str, "r", encoding="utf-8", errors="replace") as f:
                     for line in f:
                         out_f.write(line)
             except Exception as e:
