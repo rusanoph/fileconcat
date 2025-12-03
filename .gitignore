@@ -1,3 +1,4 @@
 /build
 /dist
 fileconcat.spec
+__pycache__/
