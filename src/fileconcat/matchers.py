@@ -17,10 +17,10 @@ def make_path_matchers(
     match_mode: MatchMode,
 ) -> tuple[PathIncludeFn, PathExcludeFn]:
     """
-    Возвращает две функции:
+    Returns two functions:
       - include(rel_path_str, name) -> bool
       - exclude(rel_path_str, name) -> bool
-    Логика соответствует твоему последнему монолитному скрипту.
+    The logic corresponds to the last monolithic script.
     """
     include_regex = None
     exclude_regex = None
@@ -86,19 +86,19 @@ class ContentMatcher:
 
     def check(self, file_path_str: str, name: str) -> tuple[bool, bool, bool]:
         """
-        Возвращает:
-          include_ok: прошёл ли файл по include-условию (если оно есть)
-          excluded:   исключён ли файл по exclude-условию (если оно есть)
-          had_warning: возникла ли ошибка чтения
+        Returns:
+          include_ok: whether the file passed the include condition (if it exists)
+          excluded:   whether the file was excluded by the exclude condition (if it exists)
+          had_warning: whether a read error occurred
         """
-        # Если нет ни include, ни exclude по контенту — всегда ОК
+        # If there is no include or exclude by content — always OK
         if not self._enabled:
             return True, False, False
 
         ext = os.path.splitext(name)[1].lower()
         is_binary_like = ext in self.binary_exts
 
-        # Если нужен обязательно include-паттерн, но файл бинарный — можно сразу отсечь
+        # If an include pattern is required, but the file is binary — we can immediately reject it
         if self.content_pattern and is_binary_like:
             return False, False, False
 
@@ -106,7 +106,7 @@ class ContentMatcher:
         content_excluded = False
         had_warning = False
 
-        # Если бинарный и только exclude-паттерн — считаем, что он не исключён, и не читаем файл
+        # If the file is binary and only the exclude pattern is specified, we consider it not excluded, and do not read the file
         if not is_binary_like:
             try:
                 with open(file_path_str, "r", encoding="utf-8", errors="ignore") as f:
@@ -149,7 +149,7 @@ class ContentMatcher:
                                 break
                             batch = []
 
-                    # обработать хвост
+                    # process the tail
                     if batch and not (
                         content_excluded or
                         (self.content_pattern and content_matches and not self.content_exclude_pattern)
@@ -158,10 +158,10 @@ class ContentMatcher:
 
             except Exception:
                 had_warning = True
-                # В случае ошибки чтения считаем, что файл не проходит фильтр
+                # In case of a reading error, we consider the file as not passing the filter
                 return False, False, had_warning
 
-        # финальная проверка
+        # final check
         if self.content_pattern and not content_matches:
             return False, False, had_warning
         if self.content_exclude_pattern and content_excluded:

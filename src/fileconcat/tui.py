@@ -8,7 +8,7 @@ from pathlib import Path
 from fileconcat.config import AppConfig, ScanStats, VERSION
 from fileconcat.banner import BANNERS
 
-# ANSI цвета
+# ANSI colors
 RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
