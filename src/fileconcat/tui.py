@@ -45,7 +45,7 @@ def print_config_summary(cfg: AppConfig) -> None:
     print(f"{_c(BOLD)}Input directory:{_c(RESET)} {cfg.input_dir}")
     print(f"{_c(BOLD)}Output file:    {_c(RESET)} {cfg.output_file}")
     print(f"{_c(BOLD)}Recursive:      {_c(RESET)} {cfg.recursive}")
-    print(f"{_c(BOLD)}Headers:        {_c(RESET)} {not cfg.no_headers}, body: {not cfg.no_body}")
+    print(f"{_c(BOLD)}Headers, Body:  {_c(RESET)} {not cfg.no_headers}, {not cfg.no_body}")
     print(
         f"{_c(BOLD)}Path pattern:   {_c(RESET)} {cfg.pattern!r}, "
         f"exclude: {cfg.exclude_pattern!r}, mode: {cfg.match_mode}"

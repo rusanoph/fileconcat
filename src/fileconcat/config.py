@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 
 # Directories that are skipped by default during a recursive traversal
 DEFAULT_EXCLUDED_DIR_NAMES = {

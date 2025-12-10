@@ -181,6 +181,6 @@ fileconcat \
 
 ## 📄 License
 
-MIT — see [LICENCE](./LICENCE).
+MIT — see [LICENSE](./LICENSE).
 
 
